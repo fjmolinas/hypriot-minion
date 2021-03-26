@@ -1,0 +1,137 @@
+#cloud-config
+# vim: syntax=yaml
+#
+
+# this will be changed later so don't mind the value
+hostname: riotpi
+preserve_hostname: true
+manage_etc_hosts: false
+
+# hypriot built-in
+resize_rootfs: true
+growpart:
+  mode: auto
+  devices: ["/"]
+  ignore_growroot_disabled: false
+
+# set default user
+users:
+  - name: {{ base.user }}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: "/bin/bash"
+{%- if base.groups %}
+    groups: {{ base.groups }}
+{%- endif %}
+    plain_text_passwd: {{ base.password }}
+    lock_passwd: false
+    ssh_pwauth: true
+    chpasswd: {expire: false}
+
+# set locale and timezone
+locale: {{ base.locale }}
+timezone: {{ base.timezone }}
+
+# upgrade on boot
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+packages:
+  - ntp
+
+write_files:
+{%- if docker %}
+  # initial docker config and enable ipv6
+  - path: "/etc/docker/daemon.json"
+    owner: "root:root"
+    content: |
+      {
+        "experimental": {{ docker.experimental }},
+        "ipv6": {{ docker.ipv6 }},
+        "fixed-cidr-v6": {{ docker.fixed_cidr_v6 }}
+      }
+{%- endif %}
+  # file to change hostname
+  - path: /usr/local/bin/hostname.sh
+    permissions: 0744
+    owner: root
+    content: |
+      #!/bin/bash
+
+      _ip_addr="127.0.1.1"
+      _ip_reg="127\.0\.1\.1"
+      _hostname="riotpi-$(cat /proc/cpuinfo | grep "^Serial" | cut -c 19-)"
+
+      # set machinename
+      echo $_hostname > /etc/hostname
+
+      # check if 127.0.1.1 has an entry
+      if [[ $(grep -c ${_ip_addr} /etc/hosts) -ne 0 ]]
+      then
+        sed -Ei "s/${_ip_reg}.*/${_ip_reg} ${_hostname}/g" /etc/hosts
+      else
+        echo "${_ip_addr} ${_hostname}" >> /etc/hosts
+      fi
+
+      # set hostname
+      hostname ${_hostname}
+{%- if wpa_supplicant %}
+  # setup wlan0
+  - path: /etc/network/interfaces.d/wlan0
+    content: |
+      allow-hotplug wlan0
+      iface wlan0 inet dhcp
+      wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+      iface default inet dhcp
+  # setup wpa_supplicant initial config
+  - path: /etc/wpa_supplicant/wpa_supplicant.conf
+    content: |
+      country=fr
+      ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+      update_config=1
+{%- for ssid,psk in zip(wpa_supplicant.ssid.split(','),wpa_supplicant.psk.split(',')) %}
+      network={
+        ssid="{{ ssid }}"
+        psk="{{ psk }}"
+        proto=RSN
+        key_mgmt=WPA-PSK
+        pairwise=CCMP
+        auth_alg=OPEN
+      }
+{%- endfor %}
+{%- endif %}
+
+{%- if salt_minion %}
+# Configure salt-minion
+salt_minion:
+    pkg_name: 'salt-minion'
+    service_name: 'salt-minion'
+    config_dir: '/etc/salt'
+    conf:
+        master: {{ salt_minion.master }}
+        hash_type: sha256
+        startup_stats: highstate
+{%- endif %}
+
+runcmd:
+{%- if wpa_supplicant %}
+  # Activate WiFi interface
+  - 'ifup wlan0'
+{%- endif %}
+  # set hostname
+  - sudo bash /usr/local/bin/hostname.sh
+  # update hostname change
+  - [systemctl, restart, avahi-daemon]
+{%- if docker %}
+  # update docker/daemon.json changes
+  - [systemctl, restart, docker]
+{%- endif %}
+{%- if salt_minion %}
+  # set minion_id
+  echo $HOSTNAME > /etc/salt/minion_id
+{% endif %}
+
+{% if wpa_supplicant -%}
+bootcmd:
+  # Activate WiFi interface
+  - 'ifup wlan0'
+{% endif %}
