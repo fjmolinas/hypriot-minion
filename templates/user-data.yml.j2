@@ -64,6 +64,11 @@ write_files:
       # set machinename
       echo $_hostname > /etc/hostname
 
+{%- if salt_minion %}
+      # set mionion_id
+      mkdir -p /etc/salt/
+      echo $_hostname > /etc/salt/minion_id
+{%- endif %}
       # check if 127.0.1.1 has an entry
       if [[ $(grep -c ${_ip_addr} /etc/hosts) -ne 0 ]]
       then
