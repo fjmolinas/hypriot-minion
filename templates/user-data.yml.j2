@@ -79,6 +79,40 @@ write_files:
 
       # set hostname
       hostname ${_hostname}
+{% if salt_minion -%}
+  # Configure salt-minion
+  - path: /etc/salt/minion
+    permissions: 0744
+    owner: root
+    content: |
+      master: {{ salt_minion.master }}
+      hash_type: sha256
+      startup_states: highstate
+  # salt-minion install script
+  # see https://github.com/hypriot/image-builder-rpi/issues/304
+  - path: /usr/local/bin/salt_minion.sh
+    permissions: 0744
+    owner: root
+    content: |
+      #!/bin/bash
+
+      # force update time
+      systemctl stop ntp
+      ntpd -q -g
+      systemctl start ntp
+      # wait for time update
+      sleep 5
+
+      # start APT install
+      apt-get update -y
+      # install packages
+      apt-get install -o Dpkg::Options::="--force-confold" -y salt-minion
+
+      # enable salt-minion
+      systemctl enable salt-minion
+      systemctl restart --no-block salt-minion
+
+{%- endif %}
 {%- if wpa_supplicant %}
   # setup wlan0
   - path: /etc/network/interfaces.d/wlan0
@@ -105,25 +139,15 @@ write_files:
 {%- endfor %}
 {%- endif %}
 
-{%- if salt_minion %}
-# Configure salt-minion
-salt_minion:
-    pkg_name: 'salt-minion'
-    service_name: 'salt-minion'
-    config_dir: '/etc/salt'
-    conf:
-        master: {{ salt_minion.master }}
-        hash_type: sha256
-        startup_stats: highstate
-{%- endif %}
-
 runcmd:
 {%- if wpa_supplicant %}
   # Activate WiFi interface
-  - 'ifup wlan0'
+  - [ifup, wlan0]
+  # Wait wifi connecting
+  - [sleep, 15]
 {%- endif %}
   # set hostname
-  - sudo bash /usr/local/bin/hostname.sh
+  - [bash, /usr/local/bin/hostname.sh]
   # update hostname change
   - [systemctl, restart, avahi-daemon]
 {%- if docker %}
@@ -131,12 +155,12 @@ runcmd:
   - [systemctl, restart, docker]
 {%- endif %}
 {%- if salt_minion %}
-  # set minion_id
-  echo $HOSTNAME > /etc/salt/minion_id
-{% endif %}
+  # start salt-minion
+  - [bash, /usr/local/bin/salt_minion.sh]
+{%- endif %}
 
 {% if wpa_supplicant -%}
 bootcmd:
   # Activate WiFi interface
-  - 'ifup wlan0'
+  - [ifup, wlan0]
 {% endif %}

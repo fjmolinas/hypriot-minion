@@ -63,6 +63,4 @@ with the hypriot-OS version of your choosing:
 ## Further setup
 
 Further configuration should be done via [Salt](https://docs.saltproject.io/en/latest/).
-So please follow setups at:
-
-    $
+So please follow setups in this [README.md](https://github.com/fjmolinas/pifleet-salt).
